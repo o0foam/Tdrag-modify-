@@ -4,583 +4,440 @@
  * You can modify my source code, if you have a good idea or a problem can be encountered by e-mail: tezml@tezml.com to find me.
  * 如果你想在项目中使用该插件，请不要删除该注释。
  */
-;(function($,window,document,undefined){
-    jQuery(function() {
-        //插件制作
+// 插件制作
 
+// 依赖构造函数
+const Dragfn = function(ele, opt) {
+    this.$element = ele;
+    this.options = opt;
+};
+// 构造函数方法
+Dragfn.prototype = {
+    init(el) {
+        this.ele = this.$element;
+        this.handle = $(el); // 手柄
+        this.options = this.options;
+        this.disable = this.options.disable;
+        this._start = false;
+        this._move = false;
+        this._end = false;
+        this.disX = 0;
+        this.disY = 0;
+        this.zIndex = 1000;
+        this.moving = false;
+        this.moves = '';
 
-        $.fn.Tdrag = function (opt) {
-            var call = {
-                scope: null,//父级
-                grid: null,//网格
-                axis:"all",//上下或者左右
-                pos:false,//是否记住位置
-                handle:null,//手柄
-                moveClass:"tezml",//移动时不换位加的class
-                dragChange:false,//是否开启拖拽换位
-                changeMode:"point",//point & sort
-                cbStart:function(){},//移动前的回调函数
-                cbMove:function(){},//移动中的回调函数
-                cbEnd:function(){},//移动结束时候的回调函数
-                random:false,//是否自动随机排序
-                randomInput:null,//点击随机排序的按钮
-                animation_options:{//运动时的参数
-                    duration:800,//每次运动的时间
-                    easing:"ease-out"//移动时的特效，ease-out、ease-in、linear
-                },
-                disable:false,//禁止拖拽
-                disableInput:null//禁止拖拽的按钮
-            };
-            var dragfn = new Dragfn(this, opt);
-            if (opt && $.isEmptyObject(opt) == false) {
-                dragfn.options = $.extend(call, opt);
-            } else {
-                dragfn.options = call;
-            }
-            dragfn.firstRandom=true;
-            var ele = dragfn.$element;
-            dragfn.pack(ele,false);
-            if(dragfn.options.randomInput!=null){
-                $(dragfn.options.randomInput).bind("click",function(){
-                    dragfn.pack(ele,true);
-                })
-            }
-            //加载拓展jquery的函数
-            dragfn.loadJqueryfn()
+        // 父级
+        this.scope = $.type(this.options.scope) === 'string' ? this.options.scope : null;
+
+        // 手柄
+        if (this.options.handle !== null) this.handle = $(el).find(this.options.handle);
+
+        // 三个事件
+        this.handle.on('mousedown', event => {
+            this.start(event, el);
+            el.setCapture && el.setCapture();
+            return false;
+        });
+        if (this.options.dragChange) {
+            $(el).on('mousemove', event => this.move(event, el));
+            $(el).on('mouseup', event => this.end(event, el));
+        } else {
+            $(document).on('mousemove', event => this.move(event, el));
+            $(document).on('mouseup', event => this.end(event, el));
+        }
+    },
+
+    start(event, el) {
+        this.moved = el;
+        if (this.disable === true) return false;
+        // let mousedown = [offsetX, offsetY, pageX, pageY, screenX, screenY, clientX, clientY];
+        // const { offsetLeft, offsetTop } = el;
+        // const { offsetX, offsetY, pageX, pageY, screenX, screenY, clientX, clientY, movementX, movementY } = event;
+        this._start = true;
+        const { left, top } = $(el).offset();
+        this.disX = event.clientX - el.offsetLeft;
+        this.disY = event.clientY - el.offsetTop;
+        this._disX = event.clientX - left;
+        this._disY = event.clientY - top;
+        this._OldCSS = { position: $(el).css('position'), margin: $(el).css('margin') };
+        this._OldPos = {
+            left: left - parseInt($(el).css('left'), 10),
+            top: top - parseInt($(el).css('top'), 10)
         };
+        $(el)
+            .css('position', 'fixed')
+            .css('left', left + 'px')
+            .css('top', top + 'px')
+            .css('margin', '0');
 
-        //依赖构造函数
-        var Dragfn = function (ele, opt) {
-            this.$element = ele;
-            this.options = opt;
-        };
-        //构造函数方法
-        Dragfn.prototype = {
-            init: function (obj) {
-                var self = this;
-                self.ele=self.$element;
-                self.handle=$(obj);//手柄
-                self.options = self.options;
-                self.disable = self.options.disable;
-                self._start = false;
-                self._move = false;
-                self._end = false;
-                self.disX = 0;
-                self.disY = 0;
-                self.zIndex=1000;
-                self.moving=false;
-                self.moves="";
+        $(el).css('zIndex', this.zIndex++);
+        this.move(event, el, true);
+        $.isFunction(this.options.dragStart) && this.options.dragStart(event, el, { left, top });
+    },
+    move(event, el, ncall) {
+        if (this._start !== true) return false;
+        if (el !== this.moved) return false;
+        this._move = true;
+        // let l = event.clientX - this.disX;
+        // let t = event.clientY - this.disY;
+        let l = event.clientX - this._disX;
+        let t = event.clientY - this._disY;
+        // 有父级限制
+        if (this.scope !== null) {
+            const rule = this.collTestBox(el, this.scope);
+            if (l > rule.lmax) l = rule.lmax;
+            else if (l < rule.lmin) l = rule.lmin;
+            if (t > rule.tmax) t = rule.tmax;
+            else if (t < rule.tmin) t = rule.tmin;
+        }
 
+        if (this.options.axis === 'all') {
+            el.style.left = this.grid(el, l, t).left + 'px';
+            el.style.top = this.grid(el, l, t).top + 'px';
+        } else if (this.options.axis === 'y') el.style.top = this.grid(el, l, t).top + 'px';
+        else if (this.options.axis === 'x') el.style.left = this.grid(el, l, t).left + 'px';
 
-                //父级
-                self.box = $.type(self.options.scope)==="string" ? self.options.scope : null;
-                //手柄
-                if(self.options.handle!=null){
-                    self.handle=$(obj).find(self.options.handle);
-                }
+        // if (this.options.changeWhen === 'move') {
+        //     if (this.options.changeMode === 'sort') this.sortDrag(el);
+        //     else if (this.options.changeMode === 'point') this.pointmoveDrag(el);
+        // } else this.moveAddClass(el);
 
-                //三个事件
-                self.handle.on("mousedown", function (ev) {
-                    self.start(ev, obj);
-                    obj.setCapture && obj.setCapture();
-                    return false;
-                });
-                if(self.options.dragChange) {
-                    $(obj).on("mousemove", function (ev) {
-                        self.move(ev, obj);
-                    });
-                    $(obj).on("mouseup", function (ev) {
-                        self.end(ev, obj);
-                    });
-                }else{
-                    $(document).on("mousemove", function (ev) {
-                        self.move(ev, obj);
-                    });
-                    $(document).on("mouseup", function (ev) {
-                        self.end(ev, obj);
-                    });
-                }
-            },
-            //jquery调取函数时候用
-            loadJqueryfn: function(){
-                var self=this;
-                $.extend({
-                    //返回按照index排序的回调函数
-                    sortBox:function(obj){
-                        var arr=[];
-                        for (var s = 0; s < $(obj).length; s++) {
-                            arr.push($(obj).eq(s));
-                        }
-                        for ( var i = 0; i < arr.length; i++) {
-                            for ( var j = i + 1; j < arr.length; j++) {
-                                if(Number(arr[i].attr("index")) > Number(arr[j].attr("index"))){
-                                    var temp = arr[i];
-                                    arr[i] = arr[j];
-                                    arr[j] = temp;
-                                }
-                            }
-                        }
-                        return arr
-                    },
-                    //随机排序函数
-                    randomfn:function(obj){
-                        self.pack($(obj),true);
-                    },
-                    //开启拖拽
-                    disable_open:function(){
-                        self.disable=false;
-                    },
-                    //禁止拖拽
-                    disable_cloose:function(){
-                        self.disable=true;
-                    }
-                });
-            },
-            toDisable: function(){
-                var self=this;
-                if(self.options.disableInput!=null){
-                    $(self.options.disableInput).bind("click",function(){
-                        if(self.disable==true){
-                            self.disable=false
-                        }else{
-                            self.disable=true
-                        }
-                    })
-                }
-            },
-            start: function (ev, obj) {
-                var self = this;
-                self.moved=obj;
-                if (self.disable == true) {
-                    return false
-                }
-                self._start = true;
-                var oEvent = ev || event;
-                self.disX = oEvent.clientX - obj.offsetLeft;
-                self.disY = oEvent.clientY - obj.offsetTop;
-                $(obj).css("zIndex",self.zIndex++);
-                self.options.cbStart();
-            },
-            move: function (ev, obj) {
-                var self = this;
-                if (self._start != true) {
-                    return false
-                }
-                if(obj!=self.moved){
-                    return false
-                }
-                self._move = true;
-                var oEvent = ev || event;
-                var l = oEvent.clientX - self.disX;
-                var t = oEvent.clientY - self.disY;
-                //有父级限制
-                if (self.box != null) {
-                    var rule = self.collTestBox(obj,self.box);
-                    if (l > rule.lmax) {
-                        l = rule.lmax;
-                    } else if (l < rule.lmin) {
-                        l = rule.lmin;
-                    }
-                    if (t > rule.tmax) {
-                        t = rule.tmax;
-                    } else if (t < rule.tmin) {
-                        t = rule.tmin;
-                    }
-                }
-                if(self.options.axis=="all"){
-                    obj.style.left = self.grid(obj, l, t).left  + 'px';
-                    obj.style.top = self.grid(obj, l, t).top  + 'px';
-                }else if(self.options.axis=="y"){
-                    obj.style.top = self.grid(obj, l, t).top  + 'px';
-                }else if(self.options.axis=="x"){
-                    obj.style.left = self.grid(obj, l, t).left + 'px';
-                }
-               /* if(self.options.changeWhen=="move") {
-                    if (self.options.changeMode == "sort") {
-                        self.sortDrag(obj);
-                    } else if (self.options.changeMode == "point") {
-                        self.pointmoveDrag(obj);
-                    }
-                }else{
-                    self.moveAddClass(obj);
-                }*/
-                if(self.options.pos==true){
-                    self.moveAddClass(obj);
-                }
-                self.options.cbMove(obj,self);
+        if (this.options.pos === true) this.moveAddClass(el);
+        !ncall && $.isFunction(this.options.dragMove) && this.options.dragMove(event, el, { left: l, top: t });
+    },
+    end(event, el) {
+        if (this._start !== true) return false;
+        let PositionLeft = parseInt(el.style.left, 10);
+        let PositionTop = parseInt(el.style.top, 10);
+        if (this._OldCSS.position !== 'static') {
+            $(el).css(this._OldCSS);
+            PositionLeft -= this._OldPos.left;
+            PositionTop -= this._OldPos.top;
+        }
 
-            },
-            end: function (ev, obj) {
-                var self = this;
-                if (self._start != true) {
-                    return false
+        el.style.left = PositionLeft + 'px';
+        el.style.top = PositionTop + 'px';
+
+        if (this.options.changeMode === 'sort' && this.options.pos === true) this.sortDrag(el);
+        else if (this.options.changeMode === 'point' && this.options.pos === true) this.pointDrag(el);
+
+        if (this.options.pos === true) this.animation(el, this.aPos[$(el).attr('index')]);
+
+        if (this.options.handle !== null) {
+            $(el)
+                .find(this.options.handle)
+                .unbind('onmousemove');
+            $(el)
+                .find(this.options.handle)
+                .unbind('onmouseup');
+        } else {
+            $(el).unbind('onmousemove');
+            $(el).unbind('onmouseup');
+        }
+        el.releaseCapture && el.releaseCapture();
+        this._start = false;
+
+        $.isFunction(this.options.dragEnd) && this.options.dragEnd(event, el, { left: PositionLeft, top: PositionTop });
+    },
+
+    // 算父级的宽高
+    collTestBox(el, obj2) {
+        const { top, left } = $(this.scope).offset();
+        const lmin = left; // 取的l最小值
+        const tmin = top; // 取的t最小值
+        // const lmin = 0; // 取的l最小值
+        // const tmin = 0; // 取的t最小值
+        const lmax = $(obj2).innerWidth() + left - $(el).outerWidth(); // 取的l最大值
+        const tmax = $(obj2).innerHeight() + top - $(el).outerHeight(); // 取的t最大值
+        return { lmin, tmin, lmax, tmax };
+    },
+    // 算父级宽高时候干掉margin
+    grid(el, l, t) {
+        const grid = { left: l, top: t };
+        if ($.isArray(this.options.grid) && this.options.grid.length === 2) {
+            const gx = this.options.grid[0];
+            const gy = this.options.grid[1];
+            grid.left = Math.floor((l + gx / 2) / gx) * gx;
+            grid.top = Math.floor((t + gy / 2) / gy) * gy;
+            return grid;
+        }
+        if (this.options.grid === null) return grid;
+        return false;
+    },
+    // 移动时候加class
+    moveAddClass(el) {
+        const oNear = this.findNearest(el);
+        $(this.$element).removeClass(this.options.moveClass);
+        if (oNear && $(oNear).hasClass(this.options.moveClass) === false) $(oNear).addClass(this.options.moveClass);
+    },
+    findNearest(el) {
+        let iMin = new Date().getTime();
+        let iMinIndex = -1;
+        const ele = this.ele;
+        for (let i = 0; i < ele.length; i++) {
+            if (el === ele[i]) continue;
+            if (this.collTest(el, ele[i])) {
+                const dis = this.getDis(el, ele[i]);
+                if (dis < iMin) {
+                    iMin = dis;
+                    iMinIndex = i;
                 }
-                if(self.options.changeMode=="sort"&&self.options.pos==true){
-                    self.sortDrag(obj);
-                }else if(self.options.changeMode=="point"&&self.options.pos==true){
-                    self.pointDrag(obj);
-                }
-                if(self.options.pos==true){
-                    self.animation(obj, self.aPos[$(obj).attr("index")]);
-                }
-                self.options.cbEnd();
-                if(self.options.handle!=null){
-                    $(obj).find(self.options.handle).unbind("onmousemove");
-                    $(obj).find(self.options.handle).unbind("onmouseup");
-                }else{
-                    $(obj).unbind("onmousemove");
-                    $(obj).unbind("onmouseup");
-                }
-                obj.releaseCapture && obj.releaseCapture();
-                self._start = false;
-
-            },
-            //算父级的宽高
-            collTestBox: function (obj, obj2) {
-                var self = this;
-                var l1 = 0;
-                var t1 = 0;
-                var l2 = $(obj2).innerWidth() - $(obj).outerWidth();
-                var t2 = $(obj2).innerHeight() - $(obj).outerHeight();
-                return {
-                    lmin: l1,//取的l最小值
-                    tmin: t1,//取的t最小值
-                    lmax: l2,//取的l最大值
-                    tmax: t2//取的t最大值
-                }
-
-            },
-            //算父级宽高时候干掉margin
-            grid: function (obj, l, t) {//cur:[width,height]
-                var self = this;
-                var json = {
-                    left: l,
-                    top: t
-                };
-                if ($.isArray(self.options.grid) && self.options.grid.length == 2) {
-                    var gx = self.options.grid[0];
-                    var gy = self.options.grid[1];
-                    json.left = Math.floor((l + gx / 2) / gx) * gx;
-                    json.top = Math.floor((t + gy / 2) / gy) * gy;
-                    return json
-                } else if (self.options.grid == null) {
-                    return json
-                } else {
-                    console.log("grid参数传递格式错误");
-                    return false
-                }
-            },
-            findNearest: function(obj){
-                var self=this;
-                var iMin=new Date().getTime();
-                var iMinIndex=-1;
-                var ele=self.ele;
-                for(var i=0;i<ele.length;i++){
-                    if(obj==ele[i]){
-                        continue;
-                    }
-                    if(self.collTest(obj,ele[i])){
-                        var dis=self.getDis(obj,ele[i]);
-                        if(dis<iMin){
-                            iMin=dis;
-                            iMinIndex=i;
-                        }
-                    }
-                }
-                if(iMinIndex==-1){
-                    return null;
-                }else{
-                    return ele[iMinIndex];
-                }
-        },
-            getDis: function(obj,obj2){
-                var self=this;
-                var l1=obj.offsetLeft+obj.offsetWidth/2;
-                var l2=obj2.offsetLeft+obj2.offsetWidth/2;
-
-                var t1=obj.offsetTop+obj.offsetHeight/2;
-                var t2=obj2.offsetTop+obj2.offsetHeight/2;
-
-                var a=l2-l1;
-                var b=t1-t2;
-
-            return Math.sqrt(a*a+b*b);
-        },
-            collTest: function(obj,obj2){
-                var self=this;
-                var l1=obj.offsetLeft;
-                var r1=obj.offsetLeft+obj.offsetWidth;
-                var t1=obj.offsetTop;
-                var b1=obj.offsetTop+obj.offsetHeight;
-
-                var l2=obj2.offsetLeft;
-                var r2=obj2.offsetLeft+obj2.offsetWidth;
-                var t2=obj2.offsetTop;
-                var b2=obj2.offsetTop+obj2.offsetHeight;
-
-                if(r1<l2 || r2<l1 || t2>b1 || b2<t1){
-                    return false;
-                }else{
-                    return true;
-                }
-        },
-            //初始布局转换
-            pack: function(ele,click){
-                var self=this;
-                self.toDisable();
-                if(self.options.pos==false){
-                    for (var i = 0; i < ele.length; i++) {
-                        $(ele[i]).css("position", "absolute");
-                        $(ele[i]).css("margin", "0");
-                        self.init(ele[i]);
-                    }
-                }else if(self.options.pos==true) {
-                    var arr = [];
-                    if (self.options.random || click) {
-                        while (arr.length < ele.length) {
-                            var n = self.rnd(0, ele.length);
-                            if (!self.finInArr(arr, n)) {//没找到
-                                arr.push(n);
-                            }
-                        }
-                    }
-                    if (self.options.random == false || click != true) {
-                        var n = 0;
-                        while (arr.length < ele.length) {
-                            arr.push(n);
-                            n++
-                        }
-                    }
-
-                    //如果是第二次以后随机列表，那就重新排序后再随机，因为我智商不够使，不会排了
-                    if (self.firstRandom == false) {
-                        var sortarr = [];
-                        var n = 0;
-                        while (sortarr.length < ele.length) {
-                            sortarr.push(n);
-                            n++
-                        }
-                        for (var i = 0; i < ele.length; i++) {
-                            $(ele[i]).attr("index", sortarr[i]);
-                            $(ele[i]).css("left", self.aPos[sortarr[i]].left);
-                            $(ele[i]).css("top", self.aPos[sortarr[i]].top);
-                        }
-                    }
-
-                    //布局转化
-                    self.aPos = [];
-                    if (self.firstRandom == false) {
-                        //不是第一次
-                        for (var j = 0; j < ele.length; j++) {
-                            self.aPos[j] = {
-                                left: ele[$(ele).eq(j).attr("index")].offsetLeft,
-                                top: ele[$(ele).eq(j).attr("index")].offsetTop
-                            };
-                        }
-                    } else {
-                        //第一次
-                        for (var j = 0; j < ele.length; j++) {
-                            self.aPos[j] = {left: ele[j].offsetLeft, top: ele[j].offsetTop};
-                        }
-                    }
-                    //第二个循环布局转化
-                    for (var i = 0; i < ele.length; i++) {
-                        $(ele[i]).attr("index", arr[i]);
-                        $(ele[i]).css("left", self.aPos[arr[i]].left);
-                        $(ele[i]).css("top", self.aPos[arr[i]].top);
-                        $(ele[i]).css("position", "absolute");
-                        $(ele[i]).css("margin", "0");
-                        self.init(ele[i]);
-                    }
-                    self.firstRandom = false;
-                }
-            },
-            //移动时候加class
-            moveAddClass: function(obj){
-                var self=this;
-                var oNear=self.findNearest(obj);
-                $(self.$element).removeClass(self.options.moveClass);
-                if(oNear && $(oNear).hasClass(self.options.moveClass)==false){
-                    $(oNear).addClass(self.options.moveClass);
-                }
-
-            },
-            //给li排序
-            sort: function(){
-                var self=this;
-                var arr_li=[];
-                for (var s = 0; s < self.$element.length; s++) {
-                    arr_li.push(self.$element[s]);
-                }
-                for ( var i = 0; i < arr_li.length; i++) {
-                    for ( var j = i + 1; j < arr_li.length; j++) {
-                        if(Number($(arr_li[i]).attr("index")) > Number($(arr_li[j]).attr("index"))){
-                            var temp = arr_li[i];
-                            arr_li[i] = arr_li[j];
-                            arr_li[j] = temp;
-                        }
-                    }
-                }
-                return arr_li;
-            },
-            //点对点的方式换位
-            pointDrag: function(obj){
-                var self=this;
-                //先拍序
-                var oNear=self.findNearest(obj);
-                if (oNear) {
-                    self.animation(obj,self.aPos[$(oNear).attr("index")]);
-                    self.animation(oNear, self.aPos[$(obj).attr("index")]);
-                    var tmp;
-                    tmp = $(obj).attr("index");
-                    $(obj).attr("index", $(oNear).attr("index"));
-                    $(oNear).attr("index", tmp);
-                    $(oNear).removeClass(self.options.moveClass);
-                } else if (self.options.changeWhen == "end") {
-                    self.animation(obj, self.aPos[$(obj).attr("index")]);
-                }
-
-            },
-            //排序的方式换位
-            sortDrag: function(obj){
-                var self=this;
-                //先拍序
-                var arr_li=self.sort();
-                //换位置
-                var oNear=self.findNearest(obj);
-                    if(oNear){
-                        if(Number($(oNear).attr("index"))>Number($(obj).attr("index"))){
-                            //前换后
-                            var obj_tmp=Number($(obj).attr("index"));
-                            $(obj).attr("index",Number($(oNear).attr("index"))+1);
-                            for (var i = obj_tmp; i < Number($(oNear).attr("index"))+1; i++) {
-                                self.animation(arr_li[i],self.aPos[i-1]);
-                                self.animation(obj,self.aPos[$(oNear).attr("index")]);
-                                $(arr_li[i]).removeClass(self.options.moveClass);
-                                $(arr_li[i]).attr("index",Number($(arr_li[i]).attr("index"))-1);
-                            }
-
-                        }else if(Number($(obj).attr("index"))>Number($(oNear).attr("index"))){
-                            //后换前
-                            var obj_tmp=Number($(obj).attr("index"));
-                            $(obj).attr("index",$(oNear).attr("index"));
-                            for (var i = Number($(oNear).attr("index")); i < obj_tmp; i++) {
-                                self.animation(arr_li[i],self.aPos[i+1]);
-                                self.animation(obj,self.aPos[Number($(obj).attr("index"))]);
-                                $(arr_li[i]).removeClass(self.options.moveClass);
-                                $(arr_li[i]).attr("index",Number($(arr_li[i]).attr("index"))+1);
-                            }
-                        }
-                    }else{
-                        self.animation(obj,self.aPos[$(obj).attr("index")]);
-                    }
-
-            },
-            //运动函数(后期再加参数)
-            animation: function(obj,json){
-                var self=this;
-                //考虑默认值
-                var options=self.options.animation_options; /*|| {};
-                options.duration=self.options.animation_options.duration || 800;
-                options.easing=options.easing.duration.easing || 'ease-out';*/
-                var self=this;
-                var count=Math.round(options.duration/30);
-                var start={};
-                var dis={};
-                for(var name in json){
-                    start[name]=parseFloat(self.getStyle(obj,name));
-                    if(isNaN(start[name])){
-                        switch(name){
-                            case 'left':
-                                start[name]=obj.offsetLeft;
-                                break;
-                            case 'top':
-                                start[name]=obj.offsetTop;
-                                break;
-                            case 'width':
-                                start[name]=obj.offsetWidth;
-                                break;
-                            case 'height':
-                                start[name]=obj.offsetHeight;
-                                break;
-                            case 'marginLeft':
-                                start[name]=obj.offsetLeft;
-                                break;
-                            case 'borderWidth':
-                                start[name]=0;
-                                break;
-                            //...
-                        }
-                    }
-                    dis[name]=json[name]-start[name];
-                }
-
-                var n=0;
-
-                clearInterval(obj.timer);
-                obj.timer=setInterval(function(){
-                    n++;
-                    for(var name in json){
-                        switch(options.easing){
-                            case 'linear':
-                                var a=n/count;
-                                var cur=start[name]+dis[name]*a;
-                                break;
-                            case 'ease-in':
-                                var a=n/count;
-                                var cur=start[name]+dis[name]*a*a*a;
-                                break;
-                            case 'ease-out':
-                                var a=1-n/count;
-                                var cur=start[name]+dis[name]*(1-a*a*a);
-                                break;
-                        }
-
-                        if(name=='opacity'){
-                            obj.style.opacity=cur;
-                            obj.style.filter='alpha(opacity:'+cur*100+')';
-                        }else{
-                            obj.style[name]=cur+'px';
-                        }
-                    }
-
-                    if(n==count){
-                        clearInterval(obj.timer);
-                        options.complete && options.complete();
-                    }
-                },30);
-        },
-            getStyle: function(obj,name){
-                return (obj.currentStyle || getComputedStyle(obj,false))[name];
-            },
-            //随机数
-            rnd: function(n,m){
-                return parseInt(Math.random()*(m-n)+n);
-            },
-            //在数组中找
-            finInArr: function(arr,n){
-                for(var i = 0 ; i < arr.length; i++){
-                    if(arr[i] == n){//存在
-                        return true;
-                    }
-                }
-                return false;
             }
         }
-    })
-})(jQuery,window,document);
+        if (iMinIndex === -1) return null;
+        return ele[iMinIndex];
+    },
+    collTest(el, obj2) {
+        const l1 = el.offsetLeft;
+        const r1 = el.offsetLeft + el.offsetWidth;
+        const t1 = el.offsetTop;
+        const b1 = el.offsetTop + el.offsetHeight;
 
+        const l2 = obj2.offsetLeft;
+        const r2 = obj2.offsetLeft + obj2.offsetWidth;
+        const t2 = obj2.offsetTop;
+        const b2 = obj2.offsetTop + obj2.offsetHeight;
 
+        if (r1 < l2 || r2 < l1 || t2 > b1 || b2 < t1) return false;
 
+        return true;
+    },
+    getDis(el, obj2) {
+        const l1 = el.offsetLeft + el.offsetWidth / 2;
+        const l2 = obj2.offsetLeft + obj2.offsetWidth / 2;
+        const t1 = el.offsetTop + el.offsetHeight / 2;
+        const t2 = obj2.offsetTop + obj2.offsetHeight / 2;
+        const a = l2 - l1;
+        const b = t1 - t2;
+        return Math.sqrt(a * a + b * b);
+    },
 
+    // 排序的方式换位
+    sortDrag(el) {
+        const arr_li = this.sort(); // 先拍序
+        const oNear = this.findNearest(el); // 换位置
+        if (oNear) {
+            if (Number($(oNear).attr('index')) > Number($(el).attr('index'))) {
+                // 前换后
+                const obj_tmp = Number($(el).attr('index'));
+                $(el).attr('index', Number($(oNear).attr('index')) + 1);
+                for (let i = obj_tmp; i < Number($(oNear).attr('index')) + 1; i++) {
+                    this.animation(arr_li[i], this.aPos[i - 1]);
+                    this.animation(el, this.aPos[$(oNear).attr('index')]);
+                    $(arr_li[i]).removeClass(this.options.moveClass);
+                    $(arr_li[i]).attr('index', Number($(arr_li[i]).attr('index')) - 1);
+                }
+            } else if (Number($(el).attr('index')) > Number($(oNear).attr('index'))) {
+                // 后换前
+                const obj_tmp = Number($(el).attr('index'));
+                $(el).attr('index', $(oNear).attr('index'));
+                for (let i = Number($(oNear).attr('index')); i < obj_tmp; i++) {
+                    this.animation(arr_li[i], this.aPos[i + 1]);
+                    this.animation(el, this.aPos[Number($(el).attr('index'))]);
+                    $(arr_li[i]).removeClass(this.options.moveClass);
+                    $(arr_li[i]).attr('index', Number($(arr_li[i]).attr('index')) + 1);
+                }
+            }
+        } else this.animation(el, this.aPos[$(el).attr('index')]);
+    },
+    // 给li排序
+    sort() {
+        const arr_li = [];
+        for (let s = 0; s < this.$element.length; s++) arr_li.push(this.$element[s]);
+        for (let i = 0; i < arr_li.length; i++) {
+            for (let j = i + 1; j < arr_li.length; j++) {
+                if (Number($(arr_li[i]).attr('index')) > Number($(arr_li[j]).attr('index'))) {
+                    const temp = arr_li[i];
+                    arr_li[i] = arr_li[j];
+                    arr_li[j] = temp;
+                }
+            }
+        }
+        return arr_li;
+    },
+    // 点对点的方式换位
+    pointDrag(el) {
+        const oNear = this.findNearest(el); // 先拍序
+        if (oNear) {
+            this.animation(el, this.aPos[$(oNear).attr('index')]);
+            this.animation(oNear, this.aPos[$(el).attr('index')]);
+            const tmp = $(el).attr('index');
+            $(el).attr('index', $(oNear).attr('index'));
+            $(oNear).attr('index', tmp);
+            $(oNear).removeClass(this.options.moveClass);
+        } else if (this.options.changeWhen === 'end') this.animation(el, this.aPos[$(el).attr('index')]);
+    },
 
+    // 运动函数(后期再加参数)
+    animation(el, opt) {
+        // 考虑默认值
+        const options = this.options.animation_options;
+        // options.duration = this.options.animation_options.duration || 800;
+        // options.easing = options.easing.duration.easing || 'ease-out';
+        const count = Math.round(options.duration / 30);
+        const start = {};
+        const dis = {};
+        for (const name in opt) {
+            start[name] = parseFloat(this.getStyle(el, name));
+            if (isNaN(start[name])) {
+                if (name === 'left' || name === 'marginLeft') start[name] = el.offsetLeft;
+                else if (name === 'top') start[name] = el.offsetTop;
+                else if (name === 'width') start[name] = el.offsetWidth;
+                else if (name === 'height') start[name] = el.offsetHeight;
+                else if (name === 'borderWidth') start[name] = 0;
+            }
+            dis[name] = opt[name] - start[name];
+        }
 
+        let n = 0;
 
+        clearInterval(el.timer);
+        el.timer = setInterval(() => {
+            n++;
+            for (const name in opt) {
+                let cur;
+                if (options.easing === 'linear') {
+                    const a = n / count;
+                    cur = start[name] + dis[name] * a;
+                } else if (options.easing === 'ease-in') {
+                    const a = n / count;
+                    cur = start[name] + dis[name] * a * a * a;
+                } else if (options.easing === 'ease-out') {
+                    const a = 1 - n / count;
+                    cur = start[name] + dis[name] * (1 - a * a * a);
+                }
+                if (name === 'opacity') {
+                    el.style.opacity = cur;
+                    el.style.filter = 'alpha(opacity:' + cur * 100 + ')';
+                } else el.style[name] = cur + 'px';
+            }
+            if (n === count) {
+                clearInterval(el.timer);
+                options.complete && options.complete();
+            }
+        }, 30);
+    },
+    getStyle(el, name) {
+        return (el.currentStyle || getComputedStyle(el, false))[name];
+    },
 
+    // 初始布局转换
+    pack(ele, click) {
+        if (this.options.pos === false) {
+            for (let i = 0; i < ele.length; i++) {
+                // $(ele[i]).css('position', 'absolute');
+                // $(ele[i]).css('margin', '0');
+                this.init(ele[i]);
+            }
+        } else if (this.options.pos === true) {
+            const arr = [];
+            if (this.options.random || click) {
+                while (arr.length < ele.length) {
+                    const n = this.rnd(0, ele.length);
+                    if (!this.finInArr(arr, n)) arr.push(n); // 没找到
+                }
+            }
+            if (this.options.random === false || click !== true) {
+                let n = 0;
+                while (arr.length < ele.length) {
+                    arr.push(n);
+                    n++;
+                }
+            }
 
+            // 如果是第二次以后随机列表，那就重新排序后再随机，因为我智商不够使，不会排了
+            if (this.firstRandom === false) {
+                const sortarr = [];
+                let n = 0;
+                while (sortarr.length < ele.length) {
+                    sortarr.push(n);
+                    n++;
+                }
+                for (let i = 0; i < ele.length; i++) {
+                    $(ele[i]).attr('index', sortarr[i]);
+                    $(ele[i]).css('left', this.aPos[sortarr[i]].left);
+                    $(ele[i]).css('top', this.aPos[sortarr[i]].top);
+                }
+            }
 
+            // 布局转化
+            this.aPos = [];
+            if (this.firstRandom === false) {
+                // 不是第一次
+                for (let j = 0; j < ele.length; j++) {
+                    this.aPos[j] = {
+                        left:
+                            ele[
+                                $(ele)
+                                    .eq(j)
+                                    .attr('index')
+                            ].offsetLeft,
+                        top:
+                            ele[
+                                $(ele)
+                                    .eq(j)
+                                    .attr('index')
+                            ].offsetTop
+                    };
+                }
+            } else {
+                // 第一次
+                for (let j = 0; j < ele.length; j++) this.aPos[j] = { left: ele[j].offsetLeft, top: ele[j].offsetTop };
+            }
+            // 第二个循环布局转化
+            for (let i = 0; i < ele.length; i++) {
+                $(ele[i]).attr('index', arr[i]);
+                $(ele[i]).css('left', this.aPos[arr[i]].left);
+                $(ele[i]).css('top', this.aPos[arr[i]].top);
+                $(ele[i]).css('position', 'absolute');
+                $(ele[i]).css('margin', '0');
+                this.init(ele[i]);
+            }
+            this.firstRandom = false;
+        }
+    },
+    // 随机数
+    rnd(n, m) {
+        return parseInt(Math.random() * (m - n) + n, 10);
+    },
+    // 在数组中找
+    finInArr(arr, n) {
+        for (let i = 0; i < arr.length; i++) if (arr[i] === n) return true; // 存在
+        return false;
+    }
+};
 
-
-
-
-
+$.fn.Tdrag = function(opt) {
+    const call = {
+        scope: null, // 父级
+        grid: null, // 网格
+        axis: 'all', // 上下或者左右
+        pos: false, // 是否记住位置
+        handle: null, // 手柄
+        moveClass: 'tezml', // 移动时不换位加的class
+        dragChange: false, // 是否开启拖拽换位
+        changeMode: 'point', // point & sort
+        dragStart() {}, // 移动前的回调函数
+        dragMove() {}, // 移动中的回调函数
+        dragEnd() {}, // 移动结束时候的回调函数
+        random: false, // 是否自动随机排序
+        randomInput: null, // 点击随机排序的按钮
+        animation_options: {
+            // 运动时的参数
+            duration: 800, // 每次运动的时间
+            easing: 'ease-out' // 移动时的特效，ease-out、ease-in、linear
+        },
+        disable: false, // 禁止拖拽
+        disableInput: null // 禁止拖拽的按钮
+    };
+    const dragfn = new Dragfn(this, opt);
+    if (opt && $.isEmptyObject(opt) === false) dragfn.options = $.extend(call, opt);
+    else dragfn.options = call;
+    dragfn.firstRandom = true;
+    dragfn.$element.data('Tdrag', dragfn);
+    const ele = dragfn.$element;
+    dragfn.pack(ele, false);
+    // 加载拓展jquery的函数
+    return this;
+};
